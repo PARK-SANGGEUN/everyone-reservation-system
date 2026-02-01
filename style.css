@@ -1,149 +1,164 @@
-:root{
-  --bg:#f6f7fb;
-  --card:#ffffff;
-  --text:#0f172a;
-  --muted:#6b7280;
-  --border:#e5e7eb;
-  --shadow:0 10px 30px rgba(15,23,42,.06);
-  --primary:#2563eb;
-  --primary2:#1e40af;
-  --green:#22c55e;
-  --red:#ef4444;
-  --gray:#cbd5e1;
-  --chip:#0b1220;
-}
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>예약 | 모두의 예약 시스템</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
 
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Noto Sans KR",Segoe UI,Roboto,Arial}
+<body data-page="apply">
+  <header class="topbar">
+    <div class="title-wrap">
+      <h1>모두의 예약 시스템</h1>
+      <div class="copyright">Copyright@All Teachers</div>
+    </div>
+    <div class="top-actions">
+      <button id="logoutBtn" class="btn ghost">로그아웃</button>
+    </div>
+  </header>
 
-.top{background:#fff;border-bottom:1px solid var(--border)}
-.top-inner{max-width:1100px;margin:0 auto;padding:18px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px}
-.brand .title{font-size:26px;font-weight:800;letter-spacing:-.5px}
-.brand .copy{margin-top:6px;font-size:13px;font-weight:800;color:#111827}
+  <main class="container">
 
-.wrap{max-width:1100px;margin:28px auto;padding:0 16px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;box-shadow:var(--shadow);margin-bottom:18px}
-.h2{margin:0 0 10px;font-size:18px;font-weight:800}
-.muted{color:var(--muted);line-height:1.6;margin:6px 0}
-.small{font-size:13px}
-.center{text-align:center}
-.row-between{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.right{display:flex;gap:10px;align-items:center}
+    <section class="card">
+      <div class="card-hd">
+        <div>
+          <h2>예약 페이지</h2>
+          <p class="muted">
+            이 페이지는 교사가 배부한 링크로만 접근 가능합니다.
+            <br/>
+            <span class="muted small">교사 코드: <strong id="teacherCodeLabel">-</strong></span>
+          </p>
+        </div>
+        <div class="pill"><span class="login-status">로그인 중…</span></div>
+      </div>
 
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#fff;color:var(--text);cursor:pointer;text-decoration:none;font-weight:700}
-.btn:hover{border-color:#cbd5e1}
-.btn.primary{background:var(--primary);color:#fff;border-color:transparent}
-.btn.primary:hover{background:var(--primary2)}
-.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
-.hint{margin-top:12px;color:var(--muted);font-size:13px}
+      <div class="notice">
+        <strong>안내</strong>
+        <ul>
+          <li>구글 로그인 후 예약 가능합니다.</li>
+          <li><strong>1인 1회 예약</strong>만 가능하며, 취소 후 다시 예약할 수 있습니다.</li>
+          <li>예약 상태는 실시간 반영됩니다.</li>
+        </ul>
+      </div>
+    </section>
 
-.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:999px;background:#0b1220;color:#fff;font-size:12px;font-weight:800}
+    <!-- 내 예약(1인 1회) -->
+    <section class="card">
+      <div class="card-hd">
+        <div>
+          <h2>내 예약</h2>
+          <p class="muted">현재 로그인 계정 기준으로 1개 예약만 유지됩니다.</p>
+        </div>
+        <div class="row gap">
+          <button id="cancelMyBtn" class="btn danger">내 예약 취소</button>
+        </div>
+      </div>
 
-.link-box{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
-.link-box input{flex:1;min-width:260px;padding:12px 12px;border:1px solid var(--border);border-radius:12px;background:#f8fafc;font-weight:700}
-.qr-area{display:flex;gap:12px;align-items:center;margin-top:14px;flex-wrap:wrap}
+      <div id="myReservationBox" class="myres muted center">예약 정보를 불러오는 중…</div>
+    </section>
 
-.month-nav{display:flex;align-items:center;gap:10px}
-.month-title{min-width:120px;text-align:center;font-weight:900}
+    <!-- 월 달력 -->
+    <section class="card">
+      <div class="card-hd">
+        <div>
+          <h2>월별 예약 달력</h2>
+          <div class="legend">
+            <span class="dot green"></span> 예약 가능
+            <span class="dot red"></span> 마감
+            <span class="dot gray"></span> 슬롯 없음
+          </div>
+        </div>
 
-.dow{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-top:10px;color:var(--muted);font-weight:800;font-size:13px}
-.dow div{text-align:center}
+        <div class="cal-nav">
+          <button id="prevMonthBtn" class="btn ghost">◀</button>
+          <div id="monthLabel" class="month-label">-</div>
+          <button id="nextMonthBtn" class="btn ghost">▶</button>
+        </div>
+      </div>
 
-.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-top:10px}
-.day{
-  border:1px solid var(--border);
-  border-radius:14px;
-  background:#fff;
-  padding:10px;
-  min-height:86px;
-  cursor:pointer;
-  display:flex;
-  flex-direction:column;
-  justify-content:space-between;
-}
-.day:hover{border-color:#cbd5e1}
-.day.disabled{cursor:default;opacity:.55;background:#fafafa}
-.day .date{font-weight:900}
-.badge-row{display:flex;align-items:center;justify-content:space-between}
-.dot{width:10px;height:10px;border-radius:50%}
-.dot.open{background:var(--green)}
-.dot.full{background:var(--red)}
-.dot.none{background:var(--gray)}
-.day.open{box-shadow:0 0 0 2px rgba(34,197,94,.15) inset}
-.day.full{box-shadow:0 0 0 2px rgba(239,68,68,.12) inset}
-.day.none{box-shadow:0 0 0 2px rgba(203,213,225,.18) inset}
-.day.selected{outline:3px solid rgba(37,99,235,.25)}
+      <div id="monthCalendar" class="calendar"></div>
+    </section>
 
-.subhead{margin:14px 0 8px;font-weight:900;color:#111827}
-.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
-.slot{
-  border:1px solid var(--border);
-  border-radius:14px;
-  padding:12px;
-  background:#fff;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  cursor:pointer;
-  font-weight:900;
-}
-.slot:hover{border-color:#cbd5e1}
-.slot.open{background:#ecfdf5;border-color:rgba(34,197,94,.35)}
-.slot.booked{background:#fef2f2;border-color:rgba(239,68,68,.35);cursor:default}
-.slot .mini{font-size:12px;color:var(--muted);font-weight:800}
+    <!-- 날짜별 슬롯 -->
+    <section class="card">
+      <div class="card-hd">
+        <div>
+          <h2>예약 가능 시간</h2>
+          <p class="muted">달력에서 날짜를 클릭하면 해당 날짜의 슬롯이 표시됩니다.</p>
+        </div>
+      </div>
 
-.slot-open-panel{margin-top:10px;border-top:1px dashed var(--border);padding-top:12px}
-.time-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px}
-.time-chip{
-  border:1px solid var(--border);
-  border-radius:999px;
-  padding:10px 12px;
-  background:#fff;
-  cursor:pointer;
-  font-weight:900;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-}
-.time-chip.selected{background:#eef2ff;border-color:rgba(37,99,235,.35)}
-.time-chip .t{font-weight:900}
-.time-chip .s{font-size:12px;color:var(--muted);font-weight:800}
+      <div class="row gap">
+        <div class="selected-date">
+          <strong>선택 날짜:</strong> <span id="selectedDateLabel">-</span>
+        </div>
+      </div>
 
-.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
-.table{width:100%;border-collapse:collapse;min-width:720px;background:#fff}
-.table th,.table td{padding:12px;border-bottom:1px solid var(--border);font-size:13px}
-.table th{text-align:left;background:#f8fafc;font-weight:900}
-.table td{color:#111827}
-.table tr:last-child td{border-bottom:none}
+      <div id="slotsList" class="slots-list muted center">
+        날짜를 선택하면 시간 슬롯이 표시됩니다.
+      </div>
+    </section>
 
-.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.pane{border:1px solid var(--border);border-radius:14px;padding:14px;background:#fff}
-.pane-title{font-weight:900;margin-bottom:8px}
-.ul{margin:0;padding-left:18px;color:var(--muted);line-height:1.7}
+    <!-- 예약 폼 -->
+    <section class="card">
+      <div class="card-hd">
+        <div>
+          <h2>예약 정보 입력</h2>
+          <p class="muted">시간 슬롯을 선택한 후 아래 정보를 입력하고 예약하세요.</p>
+        </div>
+      </div>
 
-.mybox{border:1px dashed var(--border);border-radius:14px;padding:14px;background:#fcfcfd}
-.kv{display:grid;grid-template-columns:120px 1fr;gap:8px;font-size:13px}
-.kv .k{color:var(--muted);font-weight:900}
-.kv .v{font-weight:900}
-.my-actions{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
+      <div class="form-grid">
+        <label class="label">
+          구분
+          <select id="roleSelect" class="input">
+            <option value="student">학생</option>
+            <option value="parent">학부모</option>
+          </select>
+        </label>
 
-.modal{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;padding:16px;z-index:50}
-.modal.show{display:flex}
-.modal-inner{width:min(560px,100%);background:#fff;border-radius:16px;border:1px solid var(--border);box-shadow:var(--shadow)}
-.modal-head{display:flex;justify-content:space-between;align-items:center;padding:16px;border-bottom:1px solid var(--border)}
-.modal-title{font-weight:1000}
-.modal-body{padding:16px}
-.modal-foot{padding:16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end}
-.field{margin-bottom:12px}
-.label{font-weight:900;margin-bottom:6px}
-.input{width:100%;padding:12px;border:1px solid var(--border);border-radius:12px;background:#f8fafc;font-weight:800}
-.radio-row{display:flex;gap:14px;flex-wrap:wrap}
-.radio{font-weight:900;color:#111827}
-.notice{margin-top:8px;padding:12px;border-radius:12px;background:#f8fafc;border:1px solid var(--border);color:var(--muted);font-weight:800}
+        <label class="label">
+          이름(학생/학부모)
+          <input id="nameInput" class="input" type="text" placeholder="이름" />
+        </label>
 
-.footer{max-width:1100px;margin:20px auto 50px;padding:0 16px;color:#9aa3b2;font-size:13px;text-align:center}
+        <label class="label role-student">
+          학번
+          <input id="studentIdInput" class="input" type="text" placeholder="학번" />
+        </label>
 
-@media (max-width:920px){
-  .grid-3{grid-template-columns:1fr}
-}
+        <label class="label role-parent" style="display:none;">
+          자녀 이름
+          <input id="childNameInput" class="input" type="text" placeholder="자녀 이름" />
+        </label>
+
+        <label class="label">
+          전화번호
+          <input id="phoneInput" class="input" type="tel" placeholder="010-0000-0000" />
+        </label>
+
+        <div class="row gap">
+          <div class="picked-slot">
+            <strong>선택 슬롯:</strong> <span id="pickedSlotLabel">-</span>
+          </div>
+        </div>
+
+        <div class="row gap">
+          <button id="bookBtn" class="btn primary">예약 확정</button>
+        </div>
+
+        <div id="msgBox" class="msg muted center"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Firebase compat SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+  <script src="app.js"></script>
+</body>
+</html>
