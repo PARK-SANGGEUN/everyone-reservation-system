@@ -3,29 +3,68 @@
 <head>
   <meta charset="UTF-8">
   <title>모두의 예약 시스템</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<header>
-  <h1>모두의 예약 시스템</h1>
-  <div class="copyright">Copyright@All Teachers</div>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <div class="title">모두의 예약 시스템</div>
+      <div class="copy">Copyright@All Teachers</div>
+    </div>
+  </div>
 </header>
 
-<main>
-  <div class="card">
-    <h2>접속 메뉴</h2>
-    <p>사용 목적에 맞는 메뉴를 선택하세요.</p>
+<main class="wrap">
+  <section class="card">
+    <h2 class="h2">접속 메뉴</h2>
+    <p class="muted">
+      교사는 상담 가능 시간을 등록하고 예약 현황을 확인합니다.<br>
+      학생·학부모는 교사가 제공한 링크로만 예약 가능합니다.
+    </p>
+    <div class="btn-row">
+      <a class="btn primary" href="teacher.html">교사용 관리 화면</a>
+      <a class="btn" href="apply.html">학생·학부모 예약 화면(테스트)</a>
+    </div>
+    <p class="hint">
+      ※ 실제 예약은 반드시 <b>교사가 배부한 링크</b>(apply.html?teacher=TCH-XXXX)로 진행하세요.
+    </p>
+  </section>
 
-    <a href="teacher.html">
-      <button>👩‍🏫 교사용 관리 화면</button>
-    </a>
-
-    <a href="apply.html">
-      <button>👨‍👩‍👧 학생·학부모 예약 화면</button>
-    </a>
-  </div>
+  <section class="card">
+    <h2 class="h2">사용 안내</h2>
+    <div class="grid-3">
+      <div class="pane">
+        <div class="pane-title">교사용</div>
+        <ul class="ul">
+          <li>구글 로그인 → 교사코드 자동 생성</li>
+          <li>월 달력에서 날짜 선택 → 시간 슬롯 열기</li>
+          <li>예약 현황 실시간 반영 / 엑셀 다운로드</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <div class="pane-title">학생용</div>
+        <ul class="ul">
+          <li>교사가 준 링크로 접속</li>
+          <li>가능한 날짜/시간 선택</li>
+          <li>1인 1회 예약(취소 후 재예약 가능)</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <div class="pane-title">학부모용</div>
+        <ul class="ul">
+          <li>교사가 준 링크로 접속</li>
+          <li>자녀 이름/연락처 입력</li>
+          <li>예약·취소 즉시 반영</li>
+        </ul>
+      </div>
+    </div>
+  </section>
 </main>
 
+<footer class="footer">
+  모두의 예약 시스템 · 실시간 상담 예약
+</footer>
 </body>
 </html>
