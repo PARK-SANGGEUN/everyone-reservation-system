@@ -3,49 +3,119 @@
 <head>
   <meta charset="UTF-8">
   <title>교사용 | 모두의 예약 시스템</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<header>
-  <h1>모두의 예약 시스템</h1>
-  <div class="copyright">Copyright@All Teachers</div>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <div class="title">모두의 예약 시스템</div>
+      <div class="copy">Copyright@All Teachers</div>
+    </div>
+    <div class="right">
+      <button class="btn" id="btnLogout">로그아웃</button>
+    </div>
+  </div>
 </header>
 
-<main>
-
+<main class="wrap">
   <section class="card">
-    <h2>📎 학생·학부모 배부용 예약 링크</h2>
-    <input id="linkBox" readonly style="width:100%;padding:10px">
-    <br><br>
-    <button onclick="copyLink()">링크 복사</button>
-    <button onclick="downloadExcel()">상담현황 엑셀 다운로드</button>
+    <div class="row-between">
+      <div>
+        <h2 class="h2">교사 전용 링크</h2>
+        <p class="muted">학생·학부모에게 아래 링크(또는 QR)를 배부하세요. 이 링크로만 예약이 가능합니다.</p>
+      </div>
+      <div class="pill" id="meBadge">로그인 중…</div>
+    </div>
+
+    <div class="link-box">
+      <input id="linkBox" readonly>
+      <button class="btn primary" id="btnCopy">링크 복사</button>
+      <button class="btn" id="btnExcel">상담현황 엑셀 다운로드</button>
+    </div>
+
+    <div class="qr-area">
+      <canvas id="qrCanvas"></canvas>
+      <div class="muted small">
+        ※ QR은 링크와 동일합니다.
+      </div>
+    </div>
   </section>
 
   <section class="card">
-    <h2>📅 월별 예약 달력</h2>
+    <div class="row-between">
+      <div>
+        <h2 class="h2">월별 예약 달력</h2>
+        <p class="muted">🟢 예약 가능 / 🔴 마감 / ⚪ 슬롯 없음</p>
+      </div>
+      <div class="month-nav">
+        <button class="btn" id="prevMonth">◀</button>
+        <div class="month-title" id="monthTitle">-</div>
+        <button class="btn" id="nextMonth">▶</button>
+      </div>
+    </div>
+
+    <div class="dow">
+      <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
+    </div>
     <div id="calendar" class="calendar"></div>
   </section>
 
   <section class="card">
-    <h2 id="selectedDate">날짜를 선택하세요</h2>
-    <div id="slots" class="slots"></div>
-  </section>
+    <div class="row-between">
+      <div>
+        <h2 class="h2" id="selectedDateTitle">날짜를 선택하세요</h2>
+        <p class="muted">선택한 날짜에 1시간 단위 슬롯을 열고, 예약 상태를 확인합니다.</p>
+      </div>
+      <div class="mini-tools">
+        <button class="btn" id="btnOpenSlots">선택 시간 열기</button>
+      </div>
+    </div>
 
+    <div class="slot-open-panel">
+      <div class="muted small">열 시간 선택 (체크 후 “선택 시간 열기”)</div>
+      <div id="timePicker" class="time-grid"></div>
+    </div>
+
+    <div class="subhead">시간 슬롯</div>
+    <div id="slots" class="slots"></div>
+
+    <div class="subhead">예약 현황</div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>날짜</th>
+            <th>시간</th>
+            <th>구분</th>
+            <th>이름</th>
+            <th>학번/자녀</th>
+            <th>연락처</th>
+          </tr>
+        </thead>
+        <tbody id="bookingTbody">
+          <tr><td colspan="6" class="muted center">날짜를 선택하면 예약 현황이 표시됩니다.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
 </main>
 
-<!-- Firebase -->
+<!-- Firebase (compat) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
-<!-- Excel -->
+<!-- Excel (SheetJS) -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<!-- QR -->
+<script src="https://cdn.jsdelivr.net/npm/qrious/dist/qrious.min.js"></script>
 
 <script src="app.js"></script>
 <script>
   initTeacherPage();
 </script>
-
 </body>
 </html>
