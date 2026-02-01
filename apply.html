@@ -3,30 +3,116 @@
 <head>
   <meta charset="UTF-8">
   <title>예약 신청 | 모두의 예약 시스템</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<header>
-  <h1>모두의 예약 시스템</h1>
-  <div class="copyright">Copyright@All Teachers</div>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <div class="title">모두의 예약 시스템</div>
+      <div class="copy">Copyright@All Teachers</div>
+    </div>
+    <div class="right">
+      <button class="btn" id="btnLogout">로그아웃</button>
+    </div>
+  </div>
 </header>
 
-<main>
+<main class="wrap">
+  <section class="card">
+    <div class="row-between">
+      <div>
+        <h2 class="h2">내 예약</h2>
+        <p class="muted">예약은 1인 1회만 가능합니다. 취소 후 다시 신청할 수 있습니다.</p>
+      </div>
+      <div class="pill" id="teacherBadge">teacher= -</div>
+    </div>
+
+    <div id="myReservationBox" class="mybox">
+      <div class="muted">내 예약을 불러오는 중…</div>
+    </div>
+  </section>
 
   <section class="card">
-    <h2>📅 상담 예약 달력</h2>
+    <div class="row-between">
+      <div>
+        <h2 class="h2">월별 예약 달력</h2>
+        <p class="muted">🟢 예약 가능 / 🔴 마감 / ⚪ 슬롯 없음</p>
+      </div>
+      <div class="month-nav">
+        <button class="btn" id="prevMonth">◀</button>
+        <div class="month-title" id="monthTitle">-</div>
+        <button class="btn" id="nextMonth">▶</button>
+      </div>
+    </div>
+
+    <div class="dow">
+      <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
+    </div>
     <div id="calendar" class="calendar"></div>
   </section>
 
   <section class="card">
-    <h2 id="selectedDate">날짜를 선택하세요</h2>
+    <h2 class="h2" id="selectedDateTitle">날짜를 선택하세요</h2>
+    <p class="muted">가능한 시간만 선택할 수 있습니다. 예약/취소는 실시간 반영됩니다.</p>
     <div id="slots" class="slots"></div>
   </section>
-
 </main>
 
-<!-- Firebase -->
+<!-- 예약 신청 모달 -->
+<div class="modal" id="modal">
+  <div class="modal-inner">
+    <div class="modal-head">
+      <div class="modal-title" id="modalTitle">예약 신청</div>
+      <button class="btn" id="modalClose">닫기</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="field">
+        <div class="label">신청자 구분</div>
+        <div class="radio-row">
+          <label class="radio"><input type="radio" name="type" value="student" checked> 학생</label>
+          <label class="radio"><input type="radio" name="type" value="parent"> 학부모</label>
+        </div>
+      </div>
+
+      <div id="studentFields">
+        <div class="field">
+          <div class="label">학번</div>
+          <input class="input" id="studentNo" placeholder="예) 30123">
+        </div>
+        <div class="field">
+          <div class="label">이름</div>
+          <input class="input" id="studentName" placeholder="예) 홍길동">
+        </div>
+        <div class="field">
+          <div class="label">전화번호</div>
+          <input class="input" id="studentPhone" placeholder="예) 010-1234-5678">
+        </div>
+      </div>
+
+      <div id="parentFields" style="display:none;">
+        <div class="field">
+          <div class="label">자녀 이름</div>
+          <input class="input" id="childName" placeholder="예) 홍길동">
+        </div>
+        <div class="field">
+          <div class="label">학부모 전화번호</div>
+          <input class="input" id="parentPhone" placeholder="예) 010-1234-5678">
+        </div>
+      </div>
+
+      <div class="notice" id="modalInfo"></div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn primary" id="btnSubmit">예약 확정</button>
+    </div>
+  </div>
+</div>
+
+<!-- Firebase (compat) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -35,6 +121,5 @@
 <script>
   initApplyPage();
 </script>
-
 </body>
 </html>
