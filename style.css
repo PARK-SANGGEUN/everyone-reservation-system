@@ -1,0 +1,7 @@
+
+body { font-family: 'Noto Sans KR', sans-serif; background:#f9fafb; margin:0; }
+header { background:#fff; padding:20px; text-align:center; border-bottom:1px solid #e5e7eb; }
+.copyright { font-weight:700; }
+main { max-width:1000px; margin:30px auto; padding:0 16px; }
+.card { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:24px; margin-bottom:24px; }
+button { margin-right:10px; padding:8px 14px; border-radius:8px; border:1px solid #ccc; cursor:pointer; }

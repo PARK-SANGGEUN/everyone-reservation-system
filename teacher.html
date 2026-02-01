@@ -1,0 +1,38 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>교사용 | 모두의 예약 시스템</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <h1>모두의 예약 시스템</h1>
+  <div class="copyright">Copyright@All Teachers</div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>📎 학생·학부모 배부용 예약 링크</h2>
+    <input id="linkBox" readonly style="width:100%;padding:10px" />
+    <button onclick="copyLink()">링크 복사</button>
+    <button onclick="downloadExcel()">상담현황 엑셀 다운로드</button>
+  </section>
+
+  <section class="card">
+    <h2>📅 월별 예약 달력</h2>
+    <div id="calendar" class="calendar"></div>
+  </section>
+
+  <section class="card">
+    <h2 id="selectedDate">날짜를 선택하세요</h2>
+    <div id="slots" class="slots"></div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/qrious/dist/qrious.min.js"></script>
+<script src="app.js"></script>
+<script>initTeacherPage();</script>
+</body>
+</html>
