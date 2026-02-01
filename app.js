@@ -1,747 +1,795 @@
-/* =========================
-   모두의 예약 시스템 (완성본)
-   - Firestore 실시간 반영
-   - 월 달력 상태(없음/가능/마감)
-   - 학생/학부모 폼
-   - 1인 1회 제한 (reservations/{uid})
-   - 자유 취소
-   - 교사용 엑셀 다운로드
-========================= */
-
-/* ✅ Firebase 설정: 본인 값으로 교체 */
+/*********************************************************
+ * 0) Firebase 설정 (본인 프로젝트 값으로 유지/교체 필수)
+ *********************************************************/
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
+  apiKey: "AIzaSyXXXXXXXXXXXXXXX",
+  authDomain: "adiga-2023-2025.firebaseapp.com",
+  projectId: "adiga-2023-2025",
+  storageBucket: "adiga-2023-2025.appspot.com",
+  messagingSenderId: "XXXXXXXXXX",
+  appId: "1:XXXXXXXX:web:XXXXXXXX"
 };
-firebase.initializeApp(firebaseConfig);
 
+firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-/* 공통 상태 */
-let PAGE = null; // "teacher" | "apply"
-let teacherCode = null;
+/*********************************************************
+ * 1) 유틸
+ *********************************************************/
+const $ = (sel) => document.querySelector(sel);
 
-let viewYear = null;
-let viewMonth = null; // 0-11
-let selectedDateStr = null; // YYYY-MM-DD
-
-// 월 구독 해제 함수
-let unsubMonth = null;
-let unsubMyRes = null;
-let unsubDay = null;
-
-// 월 슬롯 캐시: slotId -> data
-let monthSlots = new Map();
-
-/* ---------- 유틸 ---------- */
 function pad2(n){ return String(n).padStart(2,"0"); }
-
-function ymd(d){
-  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+function toYMD(date){
+  const y = date.getFullYear();
+  const m = pad2(date.getMonth()+1);
+  const d = pad2(date.getDate());
+  return `${y}-${m}-${d}`;
 }
-
-function monthKey(y,m0){
-  return `${y}-${pad2(m0+1)}`;
+function parseYMD(ymd){
+  const [y,m,d] = ymd.split("-").map(Number);
+  return new Date(y, m-1, d);
 }
+function startOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+function endOfMonthExclusive(d){ return new Date(d.getFullYear(), d.getMonth()+1, 1); }
+function addMonths(d, delta){ return new Date(d.getFullYear(), d.getMonth()+delta, 1); }
+function hourToLabel(h){ return `${pad2(h)}:00`; }
 
-function monthRange(y,m0){
-  const start = new Date(y, m0, 1, 0, 0, 0, 0);
-  const end = new Date(y, m0+1, 1, 0, 0, 0, 0);
-  return { start, end };
-}
-
-function toTimestampLocal(ymdStr, timeStr){
-  // 로컬 시간 기준 Date 생성 후 Timestamp
-  const [Y,M,D] = ymdStr.split("-").map(Number);
-  const [hh,mm] = timeStr.split(":").map(Number);
-  const dt = new Date(Y, M-1, D, hh, mm, 0, 0);
-  return firebase.firestore.Timestamp.fromDate(dt);
-}
-
-function maskPhone(p){
-  if(!p) return "";
-  const digits = p.replace(/\D/g,"");
-  if(digits.length < 8) return p;
-  // 01012345678 -> 010-****-5678
-  const tail = digits.slice(-4);
-  const head = digits.slice(0,3);
-  return `${head}-****-${tail}`;
-}
-
-function el(id){ return document.getElementById(id); }
-
-function setText(id, txt){
-  const e = el(id);
-  if(e) e.textContent = txt;
-}
-
-function setHTML(id, html){
-  const e = el(id);
-  if(e) e.innerHTML = html;
-}
-
-/* ---------- 교사코드 생성/조회 ---------- */
-function randomCode4(){
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let s="";
-  for(let i=0;i<4;i++) s+=chars[Math.floor(Math.random()*chars.length)];
+function csvEscape(v){
+  const s = String(v ?? "");
+  if (/[,"\n]/.test(s)) return `"${s.replace(/"/g,'""')}"`;
   return s;
 }
-
-async function getOrCreateTeacherCode(user){
-  // teachers 컬렉션에서 uid 매칭 doc 찾기
-  const q = await db.collection("teachers").where("uid","==",user.uid).limit(1).get();
-  if(!q.empty){
-    return q.docs[0].id; // docId = teacherCode
-  }
-
-  // 없으면 새로 생성 (충돌 방지)
-  for(let attempt=0; attempt<10; attempt++){
-    const code = "TCH-" + randomCode4();
-    const ref = db.collection("teachers").doc(code);
-    const snap = await ref.get();
-    if(!snap.exists){
-      await ref.set({
-        uid: user.uid,
-        email: user.email || "",
-        name: user.displayName || "",
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-      return code;
-    }
-  }
-  throw new Error("교사코드 생성 실패(재시도 필요)");
+function downloadCSV(filename, rows){
+  const bom = "\uFEFF";
+  const csv = rows.map(r => r.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([bom + csv], {type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
-/* ---------- 공통: 월 달력 렌더 ---------- */
-function buildCalendarCells(y, m0){
-  const first = new Date(y, m0, 1);
-  const firstDow = first.getDay(); // 0=일
-  const daysInMonth = new Date(y, m0+1, 0).getDate();
-
-  // 달력 42칸(6주) 구성
-  const cells = [];
-  for(let i=0;i<firstDow;i++){
-    cells.push({ type:"blank" });
-  }
-  for(let d=1; d<=daysInMonth; d++){
-    const dt = new Date(y, m0, d);
-    cells.push({ type:"day", date: ymd(dt), day: d });
-  }
-  while(cells.length % 7 !== 0) cells.push({ type:"blank" });
-  while(cells.length < 42) cells.push({ type:"blank" });
-  return cells;
+/*********************************************************
+ * 2) 공통: 로그인/로그아웃
+ *********************************************************/
+async function loginWithGoogle(){
+  const provider = new firebase.auth.GoogleAuthProvider();
+  return auth.signInWithPopup(provider);
+}
+async function logout(){
+  await auth.signOut();
+  location.reload();
+}
+function setLoginStatus(text){
+  const el = $(".login-status");
+  if (el) el.textContent = text;
 }
 
-function computeDayStatus(dateStr){
-  // monthSlots에서 dateStr 일치 슬롯 집계
-  let total=0, open=0, booked=0;
-  for(const [,v] of monthSlots){
-    if(v.date === dateStr){
-      total++;
-      if(v.status === "open") open++;
-      if(v.status === "booked") booked++;
-    }
-  }
-  if(total === 0) return { status:"none", dot:"none", label:"슬롯 없음" };
-  if(open > 0) return { status:"open", dot:"open", label:`가능 ${open}` };
-  return { status:"full", dot:"full", label:`마감` };
+/*********************************************************
+ * 3) 데이터 모델
+ * teachers/{uid} : { teacherCode, uid, name, email }
+ * slots/{slotId} : { teacherCode, startAt(Timestamp), ymd, hour, status(open/booked), bookedBy, role, name, studentOrChild, phone }
+ * reservations/{uid} : { teacherCode, slotId, startAt, ymd, hour, role, name, studentOrChild, phone }
+ *********************************************************/
+function genTeacherCode(){
+  return "TCH-" + Math.random().toString(36).substring(2, 6).toUpperCase();
+}
+function slotIdOf(teacherCode, ymd, hour){
+  return `${teacherCode}_${ymd.replaceAll("-","")}_${pad2(hour)}`;
 }
 
-function renderMonth(){
-  const cal = el("calendar");
-  if(!cal) return;
-
-  setText("monthTitle", `${viewYear}년 ${viewMonth+1}월`);
-  cal.innerHTML = "";
-
-  const cells = buildCalendarCells(viewYear, viewMonth);
-  for(const c of cells){
-    const div = document.createElement("div");
-    if(c.type === "blank"){
-      div.className = "day disabled";
-      div.innerHTML = `<div class="date">&nbsp;</div>`;
-      cal.appendChild(div);
-      continue;
-    }
-
-    const st = computeDayStatus(c.date);
-    div.className = `day ${st.status}` + (selectedDateStr===c.date ? " selected":"");
-    div.innerHTML = `
-      <div class="badge-row">
-        <div class="date">${c.day}</div>
-        <div class="dot ${st.dot}" title="${st.label}"></div>
-      </div>
-      <div class="muted small">${st.label}</div>
-    `;
-
-    div.onclick = () => {
-      selectedDateStr = c.date;
-      renderMonth();
-      onSelectDate(c.date);
-    };
-    cal.appendChild(div);
-  }
-}
-
-/* ---------- 월 데이터 실시간 구독 ---------- */
-function subscribeMonth(){
-  if(unsubMonth) unsubMonth();
-  monthSlots.clear();
-
-  const { start, end } = monthRange(viewYear, viewMonth);
-  // ✅ teacherCode equality + startTs range => 인덱스 필요할 수 있음(콘솔 안내대로 생성)
-  const q = db.collection("slots")
-    .where("teacherCode","==",teacherCode)
-    .where("startTs",">=", firebase.firestore.Timestamp.fromDate(start))
-    .where("startTs","<",  firebase.firestore.Timestamp.fromDate(end));
-
-  unsubMonth = q.onSnapshot((snap)=>{
-    snap.docChanges().forEach(ch=>{
-      if(ch.type === "removed"){
-        monthSlots.delete(ch.doc.id);
-      } else {
-        monthSlots.set(ch.doc.id, { id: ch.doc.id, ...ch.doc.data() });
-      }
-    });
-    renderMonth();
-
-    // 선택된 날짜가 있으면 그 날 슬롯도 다시 렌더
-    if(selectedDateStr){
-      renderDaySlots(selectedDateStr);
-      if(PAGE==="teacher"){
-        renderBookingTable(selectedDateStr);
-      }
-    }
-  }, (err)=>{
-    console.error(err);
-    alert("Firestore 인덱스가 필요할 수 있습니다. 콘솔의 에러 메시지에 나온 링크로 인덱스를 생성하세요.");
-  });
-}
-
-/* ---------- 날짜 선택 처리 ---------- */
-function onSelectDate(dateStr){
-  setText("selectedDateTitle", `📅 ${dateStr}`);
-
-  if(PAGE==="teacher"){
-    // 시간 선택 UI 표시
-    buildTimePicker();
-    renderDaySlots(dateStr) ;
-    renderBookingTable(dateStr);
-  } else {
-    renderDaySlots(dateStr);
-  }
-}
-
-/* ---------- 시간 선택(교사용 슬롯 열기) ---------- */
-function teacherDefaultTimes(){
-  // 학교 상담 시간대 예시 (필요하면 수정)
-  return ["09:00","10:00","11:00","13:00","14:00","15:00","16:00","17:00"];
-}
-
-function buildTimePicker(){
-  const tp = el("timePicker");
-  if(!tp) return;
-  tp.innerHTML = "";
-  const times = teacherDefaultTimes();
-
-  times.forEach(t=>{
-    const chip = document.createElement("div");
-    chip.className = "time-chip";
-    chip.dataset.time = t;
-    chip.innerHTML = `<span class="t">${t}</span><span class="s">선택</span>`;
-    chip.onclick = ()=>{
-      chip.classList.toggle("selected");
-      chip.querySelector(".s").textContent = chip.classList.contains("selected") ? "선택됨" : "선택";
-    };
-    tp.appendChild(chip);
-  });
-}
-
-async function openSelectedSlots(){
-  if(!selectedDateStr) return alert("먼저 날짜를 선택하세요.");
-  const tp = el("timePicker");
-  if(!tp) return;
-
-  const selected = Array.from(tp.querySelectorAll(".time-chip.selected"))
-    .map(x=>x.dataset.time);
-
-  if(selected.length === 0) return alert("열 시간을 1개 이상 선택하세요.");
-
-  // 동일 슬롯 중복 생성 방지: 이미 있는 슬롯 체크
-  const batch = db.batch();
-  let created = 0;
-
-  // 기존 슬롯(선택 날짜) 목록
-  const existing = [];
-  for(const [,v] of monthSlots){
-    if(v.date === selectedDateStr) existing.push(v.time);
-  }
-  const existingSet = new Set(existing);
-
-  selected.forEach(t=>{
-    if(existingSet.has(t)) return;
-    const ref = db.collection("slots").doc();
-    batch.set(ref, {
-      teacherCode,
-      date: selectedDateStr,
-      time: t,
-      startTs: toTimestampLocal(selectedDateStr, t),
-      status: "open",
-      bookedByUid: null,
-      bookedAt: null,
-      bookedType: null,
-      bookedName: null,
-      bookedPhone: null,
-      bookedStudentNo: null,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    created++;
-  });
-
-  if(created === 0) return alert("새로 열 슬롯이 없습니다. (이미 모두 열려 있음)");
-
-  await batch.commit();
-  alert(`슬롯 ${created}개를 열었습니다.`);
-}
-
-/* ---------- 날짜 슬롯 렌더 ---------- */
-function renderDaySlots(dateStr){
-  const container = el("slots");
-  if(!container) return;
-  container.innerHTML = "";
-
-  // 해당 날짜 슬롯만 정렬
-  const list = [];
-  for(const [,v] of monthSlots){
-    if(v.date === dateStr) list.push(v);
-  }
-  list.sort((a,b)=> (a.time||"").localeCompare(b.time||""));
-
-  if(list.length === 0){
-    container.innerHTML = `<div class="muted">해당 날짜에 열린 상담 시간이 없습니다.</div>`;
-    return;
-  }
-
-  list.forEach(v=>{
-    const div = document.createElement("div");
-    const isOpen = (v.status === "open");
-    div.className = "slot " + (isOpen ? "open" : "booked");
-    div.innerHTML = `
-      <div>${v.time}</div>
-      <div class="mini">${isOpen ? "예약 가능" : "예약됨"}</div>
-    `;
-
-    if(PAGE==="apply" && isOpen){
-      div.onclick = ()=> openReserveModal(v);
-    }
-    if(PAGE==="teacher"){
-      // 교사용은 클릭 행동 없음 (현황은 아래 테이블에서)
-    }
-    container.appendChild(div);
-  });
-}
-
-/* ---------- 교사용: 예약 현황 테이블 ---------- */
-function renderBookingTable(dateStr){
-  const tb = el("bookingTbody");
-  if(!tb) return;
-  const list = [];
-  for(const [,v] of monthSlots){
-    if(v.date === dateStr && v.status === "booked"){
-      list.push(v);
-    }
-  }
-  list.sort((a,b)=> (a.time||"").localeCompare(b.time||""));
-
-  if(list.length === 0){
-    tb.innerHTML = `<tr><td colspan="6" class="muted center">예약된 내역이 없습니다.</td></tr>`;
-    return;
-  }
-
-  tb.innerHTML = list.map(v=>{
-    const type = v.bookedType === "parent" ? "학부모" : "학생";
-    const name = v.bookedName || "";
-    const noOrChild = (v.bookedType==="student") ? (v.bookedStudentNo||"") : (v.bookedStudentNo||"");
-    const phone = maskPhone(v.bookedPhone || "");
-    return `
-      <tr>
-        <td>${v.date}</td>
-        <td>${v.time}</td>
-        <td>${type}</td>
-        <td>${name}</td>
-        <td>${noOrChild}</td>
-        <td>${phone}</td>
-      </tr>
-    `;
-  }).join("");
-}
-
-/* ---------- 교사용: 엑셀 다운로드 ---------- */
-function downloadExcelTeacher(){
-  // 현재 월 전체 booked 슬롯 다운로드
-  const rows = [];
-  for(const [,v] of monthSlots){
-    if(v.status === "booked"){
-      rows.push({
-        날짜: v.date,
-        시간: v.time,
-        구분: (v.bookedType === "parent" ? "학부모" : "학생"),
-        이름: v.bookedName || "",
-        "학번/자녀": v.bookedStudentNo || "",
-        연락처: maskPhone(v.bookedPhone || ""),
-      });
-    }
-  }
-  rows.sort((a,b)=> (a.날짜+a.시간).localeCompare(b.날짜+b.시간));
-
-  if(rows.length === 0){
-    alert("예약된 상담현황이 없습니다.");
-    return;
-  }
-
-  const ws = XLSX.utils.json_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "상담현황");
-  XLSX.writeFile(wb, `상담현황_${monthKey(viewYear,viewMonth)}.xlsx`);
-}
-
-/* ---------- 학생/학부모: 1인 1회 예약(reservations/{uid}) ---------- */
-async function getMyReservation(uid){
-  const ref = db.collection("reservations").doc(uid);
+async function ensureTeacherProfile(user){
+  const ref = db.collection("teachers").doc(user.uid);
   const snap = await ref.get();
-  return snap.exists ? { id: snap.id, ...snap.data() } : null;
+  if (snap.exists) return snap.data();
+
+  const teacherCode = genTeacherCode();
+  const data = {
+    uid: user.uid,
+    email: user.email || "",
+    name: user.displayName || "교사",
+    teacherCode,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+  await ref.set(data);
+  return data;
 }
 
-function subscribeMyReservation(){
-  const user = auth.currentUser;
-  if(!user) return;
-
-  if(unsubMyRes) unsubMyRes();
-  unsubMyRes = db.collection("reservations").doc(user.uid).onSnapshot((snap)=>{
-    renderMyReservation(snap.exists ? { id:snap.id, ...snap.data() } : null);
-  });
+function getTeacherCodeFromUrl(){
+  const u = new URL(location.href);
+  return u.searchParams.get("teacher");
 }
 
-function renderMyReservation(res){
-  const box = el("myReservationBox");
-  if(!box) return;
+/*********************************************************
+ * 4) 달력 렌더 공통
+ *********************************************************/
+function renderMonthCalendar(containerEl, monthDate, dayStatusMap, onPickDate){
+  // dayStatusMap: ymd -> "green" | "red" | "gray"
+  containerEl.innerHTML = "";
 
-  if(!res){
-    box.innerHTML = `<div class="muted">현재 예약이 없습니다. 달력에서 가능한 시간을 선택해 신청하세요.</div>`;
-    return;
+  const first = startOfMonth(monthDate);
+  const lastEx = endOfMonthExclusive(monthDate);
+
+  // 달력 시작: 해당 월 1일의 요일(일0~토6)만큼 앞을 비움
+  const startWeekday = first.getDay();
+  const totalDays = Math.round((lastEx - first) / (1000*60*60*24));
+
+  // 앞쪽 빈칸
+  for(let i=0;i<startWeekday;i++){
+    const cell = document.createElement("div");
+    cell.className = "cal-cell disabled";
+    containerEl.appendChild(cell);
   }
 
-  box.innerHTML = `
-    <div class="kv">
-      <div class="k">교사코드</div><div class="v">${res.teacherCode}</div>
-      <div class="k">예약일</div><div class="v">${res.date}</div>
-      <div class="k">예약시간</div><div class="v">${res.time}</div>
-    </div>
-    <div class="my-actions">
-      <button class="btn" id="btnCancelMine">예약 취소</button>
-    </div>
-  `;
+  // 날짜들
+  for(let d=1; d<=totalDays; d++){
+    const date = new Date(first.getFullYear(), first.getMonth(), d);
+    const ymd = toYMD(date);
+    const color = dayStatusMap.get(ymd) || "gray";
 
-  el("btnCancelMine").onclick = ()=> cancelMyReservation(res);
+    const cell = document.createElement("div");
+    cell.className = "cal-cell";
+    cell.dataset.ymd = ymd;
+
+    const dateEl = document.createElement("div");
+    dateEl.className = "cal-date";
+    dateEl.textContent = String(d);
+
+    const badge = document.createElement("div");
+    badge.className = `badge ${color}`;
+
+    cell.appendChild(dateEl);
+    cell.appendChild(badge);
+
+    cell.addEventListener("click", () => onPickDate(ymd));
+    containerEl.appendChild(cell);
+  }
 }
 
-/* ---------- 학생/학부모: 예약 모달 ---------- */
-let pendingSlot = null;
+/*********************************************************
+ * 5) 슬롯 조회 (월 단위)
+ *********************************************************/
+async function fetchSlotsForMonth(teacherCode, monthDate){
+  const start = startOfMonth(monthDate);
+  const endEx = endOfMonthExclusive(monthDate);
 
-function openReserveModal(slot){
-  pendingSlot = slot;
-  const modal = el("modal");
-  const title = el("modalTitle");
-  const info = el("modalInfo");
-  if(!modal) return;
+  // Timestamp 범위
+  const qs = await db.collection("slots")
+    .where("teacherCode", "==", teacherCode)
+    .where("startAt", ">=", firebase.firestore.Timestamp.fromDate(start))
+    .where("startAt", "<", firebase.firestore.Timestamp.fromDate(endEx))
+    .get();
 
-  title.textContent = `예약 신청 · ${slot.date} ${slot.time}`;
-  info.textContent = `교사코드: ${teacherCode} / 선택 시간: ${slot.time}`;
-
-  // reset
-  el("studentNo").value = "";
-  el("studentName").value = "";
-  el("studentPhone").value = "";
-  el("childName").value = "";
-  el("parentPhone").value = "";
-
-  modal.classList.add("show");
+  const slots = [];
+  qs.forEach(doc => slots.push({id: doc.id, ...doc.data()}));
+  return slots;
 }
 
-function closeModal(){
-  const modal = el("modal");
-  if(modal) modal.classList.remove("show");
-  pendingSlot = null;
+function makeDayStatusMap(slots){
+  // ymd별로 open 여부/total 계산
+  const map = new Map(); // ymd -> {total, open}
+  for(const s of slots){
+    const ymd = s.ymd;
+    if(!map.has(ymd)) map.set(ymd, {total:0, open:0});
+    const o = map.get(ymd);
+    o.total += 1;
+    if(s.status === "open") o.open += 1;
+  }
+
+  const status = new Map(); // ymd -> "green"|"red"|"gray"
+  for(const [ymd, v] of map.entries()){
+    if(v.total === 0) status.set(ymd, "gray");
+    else if(v.open > 0) status.set(ymd, "green");
+    else status.set(ymd, "red");
+  }
+  return status;
 }
 
-function bindModalUI(){
-  const modalClose = el("modalClose");
-  const btnSubmit = el("btnSubmit");
-  if(modalClose) modalClose.onclick = closeModal;
+/*********************************************************
+ * 6) 교사용 페이지 로직
+ *********************************************************/
+async function initTeacherPage(user){
+  const profile = await ensureTeacherProfile(user);
+  const teacherCode = profile.teacherCode;
 
-  // type switch
-  const radios = document.querySelectorAll('input[name="type"]');
-  radios.forEach(r=>{
-    r.onchange = ()=>{
-      const val = document.querySelector('input[name="type"]:checked').value;
-      el("studentFields").style.display = (val==="student") ? "block" : "none";
-      el("parentFields").style.display  = (val==="parent") ? "block" : "none";
-    };
-  });
+  setLoginStatus(`${profile.name} 로그인됨`);
 
-  if(btnSubmit){
-    btnSubmit.onclick = async ()=>{
-      if(!pendingSlot) return;
+  // 교사용 링크
+  const link = `${location.origin}/everyone-reservation-system/apply.html?teacher=${encodeURIComponent(teacherCode)}`;
+  const linkInput = $("#teacherLink");
+  if(linkInput) linkInput.value = link;
 
-      const user = auth.currentUser;
-      if(!user) return alert("로그인이 필요합니다.");
+  // 링크 복사
+  const copyBtn = $("#copyLinkBtn");
+  if(copyBtn){
+    copyBtn.addEventListener("click", () => {
+      linkInput.select();
+      document.execCommand("copy");
+      alert("교사용 링크가 복사되었습니다.");
+    });
+  }
 
-      // 1인 1회 체크는 트랜잭션에서 최종 보장
-      const type = document.querySelector('input[name="type"]:checked').value;
+  // 시간 체크 UI (09~18)
+  const hoursGrid = $("#hoursGrid");
+  const hours = [];
+  for(let h=9; h<=18; h++) hours.push(h);
 
-      let payload = {};
-      if(type === "student"){
-        const studentNo = el("studentNo").value.trim();
-        const name = el("studentName").value.trim();
-        const phone = el("studentPhone").value.trim();
-        if(!studentNo || !name || !phone) return alert("학번/이름/전화번호를 모두 입력하세요.");
-        payload = { bookedType:"student", bookedStudentNo:studentNo, bookedName:name, bookedPhone:phone };
+  const picked = new Set();
+  hoursGrid.innerHTML = "";
+  for(const h of hours){
+    const div = document.createElement("div");
+    div.className = "hour-item";
+    div.textContent = hourToLabel(h);
+    div.addEventListener("click", ()=>{
+      if(picked.has(h)){
+        picked.delete(h);
+        div.classList.remove("active");
       } else {
-        const child = el("childName").value.trim();
-        const phone = el("parentPhone").value.trim();
-        if(!child || !phone) return alert("자녀 이름/학부모 전화번호를 입력하세요.");
-        payload = { bookedType:"parent", bookedStudentNo:child, bookedName:child, bookedPhone:phone };
+        picked.add(h);
+        div.classList.add("active");
       }
+    });
+    hoursGrid.appendChild(div);
+  }
+
+  // 슬롯 생성
+  const createBtn = $("#createSlotsBtn");
+  const dateInput = $("#slotDate");
+  if(createBtn){
+    createBtn.addEventListener("click", async ()=>{
+      const ymd = dateInput.value;
+      if(!ymd){ alert("날짜를 선택하세요."); return; }
+      if(picked.size === 0){ alert("시간을 1개 이상 선택하세요."); return; }
+
+      createBtn.disabled = true;
+      createBtn.textContent = "등록 중…";
 
       try{
-        await reserveSlotTransactional(pendingSlot.id, payload);
-        closeModal();
-        alert("예약이 완료되었습니다.");
+        // 여러 슬롯: 트랜잭션 여러 번(간단/안전)
+        let created = 0, skipped = 0;
+        for(const hour of Array.from(picked).sort((a,b)=>a-b)){
+          const slotId = slotIdOf(teacherCode, ymd, hour);
+          const slotRef = db.collection("slots").doc(slotId);
+
+          await db.runTransaction(async (tx)=>{
+            const snap = await tx.get(slotRef);
+            if(snap.exists){
+              skipped += 1;
+              return;
+            }
+            const dt = parseYMD(ymd);
+            dt.setHours(hour,0,0,0);
+
+            tx.set(slotRef, {
+              teacherCode,
+              startAt: firebase.firestore.Timestamp.fromDate(dt),
+              ymd,
+              hour,
+              status: "open",
+              createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            created += 1;
+          });
+        }
+
+        alert(`등록 완료! 생성 ${created}개, 중복 ${skipped}개`);
+        picked.clear();
+        // UI 체크 해제
+        Array.from(hoursGrid.querySelectorAll(".hour-item")).forEach(el=>el.classList.remove("active"));
+
+        // 달력/테이블 갱신
+        await refreshTeacherMonth(teacherCode);
       } catch(e){
         console.error(e);
-        alert(String(e.message || e));
+        alert("슬롯 등록 중 오류가 발생했습니다. 콘솔을 확인하세요.");
+      } finally {
+        createBtn.disabled = false;
+        createBtn.textContent = "선택 시간 슬롯 등록";
       }
-    };
-  }
-
-  // 모달 바깥 클릭 닫기
-  const modal = el("modal");
-  if(modal){
-    modal.addEventListener("click", (evt)=>{
-      if(evt.target === modal) closeModal();
     });
   }
-}
 
-/* ---------- 예약 트랜잭션 (선착순 + 1인1회) ---------- */
-async function reserveSlotTransactional(slotId, payload){
-  const user = auth.currentUser;
-  if(!user) throw new Error("로그인이 필요합니다.");
+  // 달력/월 이동/날짜 선택
+  let curMonth = startOfMonth(new Date());
+  let monthSlots = [];
+  let selectedYmd = null;
 
-  const slotRef = db.collection("slots").doc(slotId);
-  const resRef  = db.collection("reservations").doc(user.uid);
+  const monthLabel = $("#monthLabel");
+  const calEl = $("#monthCalendar");
+  const selectedLabel = $("#selectedDateLabel");
+  const tbody = $("#teacherDayTbody");
 
-  await db.runTransaction(async (tx)=>{
-    const [slotSnap, resSnap] = await Promise.all([
-      tx.get(slotRef),
-      tx.get(resRef)
-    ]);
+  async function pickDate(ymd){
+    selectedYmd = ymd;
+    if(selectedLabel) selectedLabel.textContent = ymd;
 
-    if(!slotSnap.exists) throw new Error("해당 슬롯이 존재하지 않습니다.");
-    const slot = slotSnap.data();
+    const daySlots = monthSlots
+      .filter(s => s.ymd === ymd)
+      .sort((a,b)=>a.hour-b.hour);
 
-    // 교사코드 일치 확인 (링크로 들어온 교사만)
-    if(slot.teacherCode !== teacherCode) throw new Error("잘못된 교사 링크입니다.");
+    if(daySlots.length === 0){
+      tbody.innerHTML = `<tr><td colspan="6" class="muted center">선택 날짜에 슬롯이 없습니다.</td></tr>`;
+      return;
+    }
 
-    if(slot.status !== "open") throw new Error("이미 예약된 시간입니다.");
+    tbody.innerHTML = daySlots.map(s => {
+      const state = s.status === "open" ? "예약 가능" : "마감";
+      const role = s.role || "-";
+      const name = s.name || "-";
+      const so = s.studentOrChild || "-";
+      const phone = s.phone || "-";
+      return `
+        <tr>
+          <td>${hourToLabel(s.hour)}</td>
+          <td>${state}</td>
+          <td>${role}</td>
+          <td>${name}</td>
+          <td>${so}</td>
+          <td>${phone}</td>
+        </tr>
+      `;
+    }).join("");
+  }
 
-    // 1인 1회
-    if(resSnap.exists) throw new Error("이미 예약이 있습니다. 취소 후 다시 신청하세요.");
+  async function refresh(){
+    monthSlots = await fetchSlotsForMonth(teacherCode, curMonth);
+    const statusMap = makeDayStatusMap(monthSlots);
 
-    // 슬롯 업데이트
-    tx.update(slotRef, {
-      status: "booked",
-      bookedByUid: user.uid,
-      bookedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      bookedType: payload.bookedType,
-      bookedName: payload.bookedName,
-      bookedPhone: payload.bookedPhone,
-      bookedStudentNo: payload.bookedStudentNo
-    });
+    if(monthLabel){
+      monthLabel.textContent = `${curMonth.getFullYear()}-${pad2(curMonth.getMonth()+1)}`;
+    }
+    renderMonthCalendar(calEl, curMonth, statusMap, pickDate);
 
-    // 내 예약 기록 생성 (문서ID = uid)
-    tx.set(resRef, {
-      teacherCode: teacherCode,
-      slotId: slotId,
-      date: slot.date,
-      time: slot.time,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    // 선택 날짜 유지
+    if(selectedYmd){
+      await pickDate(selectedYmd);
+    } else {
+      if(selectedLabel) selectedLabel.textContent = "-";
+      tbody.innerHTML = `<tr><td colspan="6" class="muted center">날짜를 선택하면 예약 현황이 표시됩니다.</td></tr>`;
+    }
+  }
+
+  async function refreshTeacherMonth(){
+    await refresh();
+  }
+
+  // 외부 호출용
+  window.refreshTeacherMonth = refreshTeacherMonth;
+
+  // 월 이동
+  $("#prevMonthBtn").addEventListener("click", async ()=>{
+    curMonth = addMonths(curMonth, -1);
+    selectedYmd = null;
+    await refresh();
   });
-}
-
-/* ---------- 취소 (자유) ---------- */
-async function cancelMyReservation(res){
-  const user = auth.currentUser;
-  if(!user) return;
-
-  const resRef = db.collection("reservations").doc(user.uid);
-  const slotRef = db.collection("slots").doc(res.slotId);
-
-  await db.runTransaction(async (tx)=>{
-    const [resSnap, slotSnap] = await Promise.all([tx.get(resRef), tx.get(slotRef)]);
-    if(!resSnap.exists) throw new Error("예약 정보가 없습니다.");
-    if(!slotSnap.exists) throw new Error("슬롯이 없습니다.");
-
-    const slot = slotSnap.data();
-
-    // 본인 예약만 취소 가능
-    if(slot.bookedByUid !== user.uid) throw new Error("본인 예약만 취소할 수 있습니다.");
-
-    // 슬롯 되돌리기
-    tx.update(slotRef, {
-      status: "open",
-      bookedByUid: null,
-      bookedAt: null,
-      bookedType: null,
-      bookedName: null,
-      bookedPhone: null,
-      bookedStudentNo: null
-    });
-
-    // 내 예약 문서 삭제
-    tx.delete(resRef);
+  $("#nextMonthBtn").addEventListener("click", async ()=>{
+    curMonth = addMonths(curMonth, 1);
+    selectedYmd = null;
+    await refresh();
   });
 
-  alert("예약이 취소되었습니다.");
-}
+  // 엑셀 다운로드(전체)
+  $("#exportAllBtn").addEventListener("click", async ()=>{
+    // 현재 월 기준으로 다운로드
+    const rows = [
+      ["날짜","시간","상태","구분","이름","학번/자녀","연락처"]
+    ];
+    const all = monthSlots.slice().sort((a,b)=>{
+      if(a.ymd===b.ymd) return a.hour-b.hour;
+      return a.ymd.localeCompare(b.ymd);
+    });
+    for(const s of all){
+      rows.push([
+        s.ymd,
+        hourToLabel(s.hour),
+        s.status==="open" ? "예약 가능" : "마감",
+        s.role || "",
+        s.name || "",
+        s.studentOrChild || "",
+        s.phone || ""
+      ]);
+    }
+    downloadCSV(`상담현황_${teacherCode}_${monthLabel.textContent}.csv`, rows);
+  });
 
-/* ---------- 로그인/로그아웃 ---------- */
-async function signIn(){
-  const provider = new firebase.auth.GoogleAuthProvider();
-  await auth.signInWithPopup(provider);
-}
+  // 엑셀 다운로드(선택 날짜)
+  $("#exportDayBtn").addEventListener("click", async ()=>{
+    if(!selectedYmd){ alert("날짜를 먼저 선택하세요."); return; }
+    const rows = [
+      ["날짜","시간","상태","구분","이름","학번/자녀","연락처"]
+    ];
+    const day = monthSlots.filter(s=>s.ymd===selectedYmd).sort((a,b)=>a.hour-b.hour);
+    for(const s of day){
+      rows.push([
+        s.ymd,
+        hourToLabel(s.hour),
+        s.status==="open" ? "예약 가능" : "마감",
+        s.role || "",
+        s.name || "",
+        s.studentOrChild || "",
+        s.phone || ""
+      ]);
+    }
+    downloadCSV(`상담현황_${teacherCode}_${selectedYmd}.csv`, rows);
+  });
 
-async function signOut(){
-  await auth.signOut();
-  location.href = "index.html";
-}
+  // 실시간 반영: 현재 달 범위만 스냅샷 리스너
+  let unsub = null;
+  function startRealtime(){
+    if(unsub) unsub();
+    const start = startOfMonth(curMonth);
+    const endEx = endOfMonthExclusive(curMonth);
 
-/* ---------- 페이지 초기화: 교사용 ---------- */
-async function initTeacherPage(){
-  PAGE = "teacher";
+    unsub = db.collection("slots")
+      .where("teacherCode", "==", teacherCode)
+      .where("startAt", ">=", firebase.firestore.Timestamp.fromDate(start))
+      .where("startAt", "<", firebase.firestore.Timestamp.fromDate(endEx))
+      .onSnapshot(async ()=>{
+        await refresh();
+      }, (e)=>{
+        console.error(e);
+      });
+  }
 
-  // UI events
-  const btnLogout = el("btnLogout");
-  if(btnLogout) btnLogout.onclick = signOut;
+  await refresh();
+  startRealtime();
 
-  const btnCopy = el("btnCopy");
-  if(btnCopy) btnCopy.onclick = ()=>{
-    navigator.clipboard.writeText(el("linkBox").value);
-    alert("링크가 복사되었습니다.");
+  // 월 이동 시 realtime 범위도 갱신
+  const oldPrev = $("#prevMonthBtn").onclick;
+  const oldNext = $("#nextMonthBtn").onclick;
+  $("#prevMonthBtn").onclick = async ()=>{
+    curMonth = addMonths(curMonth, -1);
+    selectedYmd = null;
+    await refresh();
+    startRealtime();
   };
-
-  const btnExcel = el("btnExcel");
-  if(btnExcel) btnExcel.onclick = downloadExcelTeacher;
-
-  const prev = el("prevMonth");
-  const next = el("nextMonth");
-  if(prev) prev.onclick = ()=> changeMonth(-1);
-  if(next) next.onclick = ()=> changeMonth(+1);
-
-  const btnOpenSlots = el("btnOpenSlots");
-  if(btnOpenSlots) btnOpenSlots.onclick = openSelectedSlots;
-
-  // auth
-  await signIn();
-  const user = auth.currentUser;
-
-  setText("meBadge", user.displayName ? `${user.displayName} (교사)` : "교사");
-
-  teacherCode = await getOrCreateTeacherCode(user);
-
-  const link = `${location.origin}${location.pathname.replace(/teacher\.html$/,"apply.html")}?teacher=${teacherCode}`;
-  el("linkBox").value = link;
-
-  // QR
-  const qr = new QRious({
-    element: el("qrCanvas"),
-    value: link,
-    size: 160
-  });
-
-  // month init
-  const now = new Date();
-  viewYear = now.getFullYear();
-  viewMonth = now.getMonth();
-  selectedDateStr = null;
-
-  subscribeMonth();
-  renderMonth();
+  $("#nextMonthBtn").onclick = async ()=>{
+    curMonth = addMonths(curMonth, 1);
+    selectedYmd = null;
+    await refresh();
+    startRealtime();
+  };
 }
 
-/* ---------- 페이지 초기화: 학생/학부모 ---------- */
-async function initApplyPage(){
-  PAGE = "apply";
-
-  const btnLogout = el("btnLogout");
-  if(btnLogout) btnLogout.onclick = signOut;
-
-  const prev = el("prevMonth");
-  const next = el("nextMonth");
-  if(prev) prev.onclick = ()=> changeMonth(-1);
-  if(next) next.onclick = ()=> changeMonth(+1);
-
-  // teacher param required
-  const params = new URLSearchParams(location.search);
-  teacherCode = params.get("teacher") || null;
-  setText("teacherBadge", `teacher=${teacherCode || "-"}`);
+/*********************************************************
+ * 7) 예약 페이지 로직 (학생/학부모)
+ *********************************************************/
+async function initApplyPage(user){
+  const teacherCode = getTeacherCodeFromUrl();
+  const teacherLabel = $("#teacherCodeLabel");
+  if(teacherLabel) teacherLabel.textContent = teacherCode || "-";
 
   if(!teacherCode){
-    alert("교사 링크가 필요합니다. 교사에게 받은 링크로 접속하세요.");
-    // 테스트 접근은 허용하되 기능 제한
+    alert("유효한 교사 링크가 아닙니다. (teacher 파라미터 없음)");
+    return;
   }
 
-  await signIn();
-  bindModalUI();
-  subscribeMyReservation();
+  setLoginStatus(`${user.displayName || "사용자"} 로그인됨`);
 
-  // month init
-  const now = new Date();
-  viewYear = now.getFullYear();
-  viewMonth = now.getMonth();
-  selectedDateStr = null;
+  // 내 예약 로드
+  const myBox = $("#myReservationBox");
+  const myRef = db.collection("reservations").doc(user.uid);
 
-  if(teacherCode){
-    subscribeMonth();
-    renderMonth();
-  } else {
-    // teacherCode 없으면 달력 비활성
-    setText("monthTitle", `${viewYear}년 ${viewMonth+1}월`);
-    setHTML("calendar", `<div class="muted">교사 링크가 없으면 예약 달력을 표시할 수 없습니다.</div>`);
+  async function refreshMyReservation(){
+    const snap = await myRef.get();
+    if(!snap.exists){
+      myBox.innerHTML = `<div class="muted center">현재 예약이 없습니다.</div>`;
+      return null;
+    }
+    const r = snap.data();
+    myBox.innerHTML = `
+      <div><strong>예약일:</strong> ${r.ymd} ${hourToLabel(r.hour)}</div>
+      <div><strong>교사코드:</strong> ${r.teacherCode}</div>
+      <div><strong>구분:</strong> ${r.role}</div>
+      <div><strong>이름:</strong> ${r.name}</div>
+      <div><strong>학번/자녀:</strong> ${r.studentOrChild}</div>
+      <div><strong>연락처:</strong> ${r.phone}</div>
+    `;
+    return r;
   }
+
+  // 취소
+  $("#cancelMyBtn").addEventListener("click", async ()=>{
+    const r = await refreshMyReservation();
+    if(!r){ alert("취소할 예약이 없습니다."); return; }
+
+    if(!confirm("예약을 취소하시겠습니까?")) return;
+
+    try{
+      await db.runTransaction(async (tx)=>{
+        const rSnap = await tx.get(myRef);
+        if(!rSnap.exists) return;
+
+        const rr = rSnap.data();
+        const slotRef = db.collection("slots").doc(rr.slotId);
+        const sSnap = await tx.get(slotRef);
+        if(sSnap.exists){
+          const ss = sSnap.data();
+          // 본인 예약만 취소 가능
+          if(ss.bookedBy === user.uid){
+            tx.update(slotRef, {
+              status: "open",
+              bookedBy: firebase.firestore.FieldValue.delete(),
+              role: firebase.firestore.FieldValue.delete(),
+              name: firebase.firestore.FieldValue.delete(),
+              studentOrChild: firebase.firestore.FieldValue.delete(),
+              phone: firebase.firestore.FieldValue.delete(),
+              bookedAt: firebase.firestore.FieldValue.delete(),
+            });
+          }
+        }
+        tx.delete(myRef); // 1인 1회 제한을 풀기 위해 삭제
+      });
+
+      $("#msgBox").textContent = "예약이 취소되었습니다. 다시 예약할 수 있습니다.";
+      await refreshAll();
+    } catch(e){
+      console.error(e);
+      alert("취소 중 오류가 발생했습니다.");
+    }
+  });
+
+  // 달력 / 월 이동 / 날짜 선택
+  let curMonth = startOfMonth(new Date());
+  let monthSlots = [];
+  let selectedYmd = null;
+  let pickedSlotId = null;
+
+  const monthLabel = $("#monthLabel");
+  const calEl = $("#monthCalendar");
+  const selectedLabel = $("#selectedDateLabel");
+  const slotsList = $("#slotsList");
+  const pickedLabel = $("#pickedSlotLabel");
+  const msgBox = $("#msgBox");
+
+  // 역할 토글
+  const roleSelect = $("#roleSelect");
+  const studentBlock = document.querySelector(".role-student");
+  const parentBlock = document.querySelector(".role-parent");
+  function updateRoleUI(){
+    const v = roleSelect.value;
+    if(v==="student"){
+      studentBlock.style.display = "";
+      parentBlock.style.display = "none";
+    } else {
+      studentBlock.style.display = "none";
+      parentBlock.style.display = "";
+    }
+  }
+  roleSelect.addEventListener("change", updateRoleUI);
+  updateRoleUI();
+
+  async function pickDate(ymd){
+    selectedYmd = ymd;
+    if(selectedLabel) selectedLabel.textContent = ymd;
+
+    const daySlots = monthSlots
+      .filter(s => s.ymd === ymd)
+      .sort((a,b)=>a.hour-b.hour);
+
+    if(daySlots.length===0){
+      slotsList.innerHTML = `<div class="muted center">선택 날짜에 슬롯이 없습니다.</div>`;
+      pickedSlotId = null;
+      pickedLabel.textContent = "-";
+      return;
+    }
+
+    slotsList.innerHTML = "";
+    for(const s of daySlots){
+      const chip = document.createElement("div");
+      chip.className = "slot-chip " + (s.status==="open" ? "open" : "booked");
+      chip.textContent = `${hourToLabel(s.hour)} ${s.status==="open" ? "예약가능" : "마감"}`;
+
+      if(s.status==="open"){
+        chip.addEventListener("click", ()=>{
+          // active 처리
+          Array.from(slotsList.querySelectorAll(".slot-chip")).forEach(x=>x.classList.remove("active"));
+          chip.classList.add("active");
+          pickedSlotId = s.id;
+          pickedLabel.textContent = `${s.ymd} ${hourToLabel(s.hour)}`;
+          msgBox.textContent = "";
+        });
+      }
+      slotsList.appendChild(chip);
+    }
+  }
+
+  async function refreshMonth(){
+    monthSlots = await fetchSlotsForMonth(teacherCode, curMonth);
+    const statusMap = makeDayStatusMap(monthSlots);
+
+    if(monthLabel){
+      monthLabel.textContent = `${curMonth.getFullYear()}-${pad2(curMonth.getMonth()+1)}`;
+    }
+    renderMonthCalendar(calEl, curMonth, statusMap, pickDate);
+
+    // 날짜 선택 유지
+    if(selectedYmd) await pickDate(selectedYmd);
+    else {
+      if(selectedLabel) selectedLabel.textContent = "-";
+      slotsList.innerHTML = `<div class="muted center">날짜를 선택하면 시간 슬롯이 표시됩니다.</div>`;
+    }
+  }
+
+  async function refreshAll(){
+    await refreshMyReservation();
+    await refreshMonth();
+  }
+
+  // 월 이동
+  $("#prevMonthBtn").addEventListener("click", async ()=>{
+    curMonth = addMonths(curMonth, -1);
+    selectedYmd = null;
+    pickedSlotId = null;
+    pickedLabel.textContent = "-";
+    await refreshAll();
+  });
+  $("#nextMonthBtn").addEventListener("click", async ()=>{
+    curMonth = addMonths(curMonth, 1);
+    selectedYmd = null;
+    pickedSlotId = null;
+    pickedLabel.textContent = "-";
+    await refreshAll();
+  });
+
+  // 예약 확정 (⭐ 1인 1회 제한 + 선착순 트랜잭션)
+  $("#bookBtn").addEventListener("click", async ()=>{
+    msgBox.textContent = "";
+
+    if(!pickedSlotId){
+      msgBox.textContent = "시간 슬롯을 먼저 선택하세요.";
+      return;
+    }
+
+    const role = roleSelect.value;
+    const name = $("#nameInput").value.trim();
+    const phone = $("#phoneInput").value.trim();
+    const studentId = $("#studentIdInput").value.trim();
+    const childName = $("#childNameInput").value.trim();
+
+    if(!name){ msgBox.textContent="이름을 입력하세요."; return; }
+    if(!phone){ msgBox.textContent="전화번호를 입력하세요."; return; }
+    if(role==="student" && !studentId){ msgBox.textContent="학번을 입력하세요."; return; }
+    if(role==="parent" && !childName){ msgBox.textContent="자녀 이름을 입력하세요."; return; }
+
+    const slotRef = db.collection("slots").doc(pickedSlotId);
+
+    try{
+      await db.runTransaction(async (tx)=>{
+        // 1) 이미 예약했는지 확인 (1인 1회)
+        const mySnap = await tx.get(myRef);
+        if(mySnap.exists){
+          throw new Error("ALREADY_RESERVED");
+        }
+
+        // 2) 슬롯 상태 확인 (선착순)
+        const sSnap = await tx.get(slotRef);
+        if(!sSnap.exists) throw new Error("SLOT_NOT_FOUND");
+
+        const s = sSnap.data();
+        if(s.status !== "open") throw new Error("SLOT_ALREADY_BOOKED");
+        if(s.teacherCode !== teacherCode) throw new Error("TEACHER_MISMATCH");
+
+        const studentOrChild = role==="student" ? studentId : childName;
+        const roleLabel = role==="student" ? "학생" : "학부모";
+
+        // 3) 슬롯을 booked로 업데이트
+        tx.update(slotRef, {
+          status: "booked",
+          bookedBy: user.uid,
+          role: roleLabel,
+          name,
+          studentOrChild,
+          phone,
+          bookedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        // 4) reservations/{uid} 생성 (1인 1회 고정)
+        tx.set(myRef, {
+          uid: user.uid,
+          teacherCode,
+          slotId: pickedSlotId,
+          startAt: s.startAt,
+          ymd: s.ymd,
+          hour: s.hour,
+          role: roleLabel,
+          name,
+          studentOrChild,
+          phone,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+
+      msgBox.textContent = "예약이 완료되었습니다!";
+      pickedSlotId = null;
+      pickedLabel.textContent = "-";
+      await refreshAll();
+
+    } catch(e){
+      console.error(e);
+      if(e.message === "ALREADY_RESERVED"){
+        msgBox.textContent = "이미 예약이 있습니다. (1인 1회 제한) 먼저 취소 후 다시 예약하세요.";
+      } else if(e.message === "SLOT_ALREADY_BOOKED"){
+        msgBox.textContent = "방금 다른 사람이 먼저 예약했습니다. 다른 시간을 선택하세요.";
+      } else {
+        msgBox.textContent = "예약 중 오류가 발생했습니다. 잠시 후 다시 시도하세요.";
+      }
+    }
+  });
+
+  // 실시간 반영: 월 범위 슬롯 스냅샷
+  let unsub = null;
+  function startRealtime(){
+    if(unsub) unsub();
+    const start = startOfMonth(curMonth);
+    const endEx = endOfMonthExclusive(curMonth);
+
+    unsub = db.collection("slots")
+      .where("teacherCode", "==", teacherCode)
+      .where("startAt", ">=", firebase.firestore.Timestamp.fromDate(start))
+      .where("startAt", "<", firebase.firestore.Timestamp.fromDate(endEx))
+      .onSnapshot(async ()=>{
+        await refreshMonth();
+        await refreshMyReservation();
+      }, (e)=>console.error(e));
+  }
+
+  await refreshAll();
+  startRealtime();
+
+  // 월 이동 시 realtime 범위 갱신
+  const oldPrev = $("#prevMonthBtn").onclick;
+  const oldNext = $("#nextMonthBtn").onclick;
+  $("#prevMonthBtn").onclick = async ()=>{
+    curMonth = addMonths(curMonth, -1);
+    selectedYmd = null;
+    pickedSlotId = null;
+    pickedLabel.textContent = "-";
+    await refreshAll();
+    startRealtime();
+  };
+  $("#nextMonthBtn").onclick = async ()=>{
+    curMonth = addMonths(curMonth, 1);
+    selectedYmd = null;
+    pickedSlotId = null;
+    pickedLabel.textContent = "-";
+    await refreshAll();
+    startRealtime();
+  };
 }
 
-/* ---------- 월 이동 ---------- */
-function changeMonth(delta){
-  const d = new Date(viewYear, viewMonth, 1);
-  d.setMonth(d.getMonth()+delta);
-  viewYear = d.getFullYear();
-  viewMonth = d.getMonth();
-  selectedDateStr = null;
+/*********************************************************
+ * 8) 페이지 엔트리
+ *********************************************************/
+(function main(){
+  // 로그아웃 버튼
+  const logoutBtn = $("#logoutBtn");
+  if(logoutBtn) logoutBtn.addEventListener("click", logout);
 
-  subscribeMonth();
-  renderMonth();
+  const page = document.body.dataset.page;
 
-  // 하단 초기화
-  setText("selectedDateTitle", "날짜를 선택하세요");
-  const slots = el("slots");
-  if(slots) slots.innerHTML = "";
-  if(PAGE==="teacher"){
-    const tb = el("bookingTbody");
-    if(tb) tb.innerHTML = `<tr><td colspan="6" class="muted center">날짜를 선택하면 예약 현황이 표시됩니다.</td></tr>`;
-  }
-}
+  auth.onAuthStateChanged(async (user)=>{
+    if(!user){
+      setLoginStatus("로그인 필요");
+      try{
+        await loginWithGoogle();
+      } catch(e){
+        console.error(e);
+        alert("로그인에 실패했습니다. 팝업 차단 여부를 확인하세요.");
+      }
+      return;
+    }
+
+    // 로그인 성공
+    if(page === "teacher"){
+      await initTeacherPage(user);
+    } else if(page === "apply"){
+      await initApplyPage(user);
+    }
+  });
+})();
